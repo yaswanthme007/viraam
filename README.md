@@ -1,73 +1,194 @@
-# VIRAAM
+<div align="center">
 
-**A coercion-aware circuit breaker for UPI payments.** Hackathon Round 1 prototype.
+# ❚❚ VIRAAM
 
-*Viraam* (विराम) means "pause". When someone is being coerced into paying, for example kept on a 47-minute
-"digital arrest" call while a scammer controls their screen, the payment rail sees nothing unusual: a valid
-user, a valid PIN, a valid payee. VIRAAM adds the one thing the bank is missing, **situational context**,
-without handing over the user's private data.
+### A coercion-aware circuit breaker for UPI payments
 
-At payment time, the phone looks at its *own situation*, not at whether the payee is risky. It asks: is a long
-call active, is something controlling the screen, is this payee new, is this hour unusual? It reduces those
-signals to **evidence codes** and emits a **signed attestation**: a verdict, a 0–100 risk score and the codes,
-with **no raw personal data**. The bank verifies the signature and applies its own declarative policy:
+*Viraam* (विराम) means **pause**. It is the one thing a scam victim needs and today's payment rail can't give them.
 
-| Outcome | What happens |
-|---|---|
-| **ALLOW** | Payment goes to the rail. |
-| **STEP_UP** | Cooling-off period, then the payer must re-confirm with a *fresh* attestation. |
-| **HOLD** | Payment frozen. The payer's **trusted contact** is asked on *their own* device to approve or deny. No answer before expiry means **DENY**. |
+[![Hackathon](https://img.shields.io/badge/Hackathon-Round%201%20Prototype-0F5257?style=for-the-badge)](#)
+[![Theme](https://img.shields.io/badge/Theme-Cybersecurity-B3261E?style=for-the-badge)](#)
 
-> Everything here is offline and synthetic. There is no bank, NPCI or UPI integration; the payment rail is an
-> in-memory mock. Every name, VPA (`@mockupi`), device id and key is invented for the demo.
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A520-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-4-000000?logo=express&logoColor=white)](https://expressjs.com/)
+[![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
+[![pnpm](https://img.shields.io/badge/pnpm-workspaces-F69220?logo=pnpm&logoColor=white)](https://pnpm.io/)
+[![Zod](https://img.shields.io/badge/Zod-strict%20schemas-3E67B1?logo=zod&logoColor=white)](https://zod.dev/)
+
+[![Crypto](https://img.shields.io/badge/Signatures-Ed25519-6E40C9)](#-the-attestation)
+[![Verify](https://img.shields.io/badge/pnpm%20verify-52%20checks%20passing-17703F)](#-verification)
+[![Offline](https://img.shields.io/badge/Runtime-100%25%20offline-555C68)](#-quick-start)
+[![Data](https://img.shields.io/badge/Data-synthetic%20only-555C68)](#-real-vs-simulated)
+[![AI](https://img.shields.io/badge/AI-optional%20%26%20removable-0F5257)](#-ai-supports-the-system-it-is-not-the-system)
+
+**[Quick start](#-quick-start)** · **[How it works](#-how-it-works)** · **[Architecture](#-architecture)** · **[Privacy](#-what-never-leaves-the-phone)** · **[Demo script](#-90-second-demo-script)** · **[Project document (PDF)](docs/VIRAAM-Project-Document.pdf)**
+
+<img src="docs/screenshots/device-hold.png" alt="VIRAAM pausing a ₹2,00,000 payment during a 47-minute call with a remote-access app active" width="900" />
+
+</div>
 
 ---
 
-## Run it
+## 📌 Table of contents
 
-Requires **Node 20+** and **pnpm 9** (`corepack enable`, or `npm i -g pnpm@9`).
+- [The problem](#-the-problem)
+- [What VIRAAM does](#-what-viraam-does)
+- [Screenshots](#-screenshots)
+- [Quick start](#-quick-start)
+- [How it works](#-how-it-works)
+- [Architecture](#-architecture)
+- [The attestation](#-the-attestation)
+- [What never leaves the phone](#-what-never-leaves-the-phone)
+- [Bank-side policy engine](#-bank-side-policy-engine)
+- [AI supports the system; it is not the system](#-ai-supports-the-system-it-is-not-the-system)
+- [REAL vs SIMULATED](#-real-vs-simulated)
+- [`DeviceSignalCollector`: the native seam](#-devicesignalcollector-the-native-seam)
+- [Demo scenarios](#-demo-scenarios)
+- [90-second demo script](#-90-second-demo-script)
+- [Verification](#-verification)
+- [API reference](#-api-reference)
+- [Project structure](#-project-structure)
+- [Known limits and roadmap](#-known-limits-and-roadmap)
+
+---
+
+## 🚨 The problem
+
+In a **"digital arrest"** scam, a fraudster posing as police, customs or a regulator keeps the victim on a
+video or voice call for hours. They convince the victim to install a "verification" app that is really a
+remote-access tool, and then direct them to move their savings to a "safe custody" account.
+
+To the payment rail, every one of these transfers looks **legitimate**: the right user, the right device, the
+right UPI PIN, a valid payee. Fraud systems score the *counterparty* and the *transaction*, but the
+signal that matters is **the situation the payer is in**, and that only exists on the phone.
+
+> The victim isn't hacked. They're **coerced**. Authentication can't stop a user who is authenticating
+> under duress.
+
+## 🛡 What VIRAAM does
+
+VIRAAM is a **consent layer between the phone and the payment rail**.
+
+1. At payment time, the device evaluates its **situational context** (long active call, remote control or screen share, first-seen payee, unusual hour, unusual amount) with a **deterministic rule engine**.
+2. It emits an **Ed25519-signed attestation** containing a verdict, a 0–100 session risk and **evidence codes only**. It contains no phone numbers, app names, screen contents or history.
+3. The bank **verifies** the signature, freshness, payment binding and nonce, then applies a **declarative policy file**:
+
+| Outcome | What happens |
+|---|---|
+| ✅ **ALLOW** | Payment goes straight to the rail. Normal payments don't notice VIRAAM. |
+| ⏸ **STEP_UP** | A cooling-off period, then the payer must re-confirm with a *fresh* attestation. |
+| 🧊 **HOLD** | Payment frozen. The payer's **trusted contact** approves or denies on *their own* device with *their own* key. No answer before expiry means **DENY**: silence never releases money. |
+
+### Key features
+
+- 🔏 **Signed situational attestations**: Ed25519, domain-separated, canonical JSON, bound to exactly one payment, single-use nonce.
+- 🧾 **Evidence codes, not data**: eight boolean facts. The schema is `.strict()`, so raw data can't be smuggled in.
+- 📜 **Policy as data**: the bank's rules live in a readable, schema-validated [`policy.yaml`](services/gateway/config/policy.yaml).
+- 👥 **Trusted-contact escalation**: signed approve/deny, live over SSE, with safe expiry to DENY.
+- 🎯 **False-positive guard**: a long call *alone* is detected but never blocked.
+- 🧠 **Removable AI**: the rule engine is the default path. Delete the `ai/` folder and everything still builds, runs and passes.
+- 📺 **Projector-ready console**: a live decision stream showing which evidence codes and which rule drove each verdict.
+- 🔌 **Fully offline**: no external APIs, CDNs or fonts, and a mock payment rail.
+
+---
+
+## 📸 Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><b>Without VIRAAM</b>: the ₹2,00,000 just goes.<br/><img src="docs/screenshots/device-unprotected.png" alt="Payment settles with VIRAAM disabled"/></td>
+    <td width="50%"><b>With VIRAAM</b>: the same situation is paused.<br/><img src="docs/screenshots/device-hold.png" alt="VIRAAM hold overlay"/></td>
+  </tr>
+  <tr>
+    <td><b>Trusted contact</b> sees a band and reasons, not the payee.<br/><img src="docs/screenshots/trusted-request.png" alt="Trusted contact approval screen" width="360"/></td>
+    <td><b>Outcome</b>: Ravi said no, so the money stays.<br/><img src="docs/screenshots/device-stopped.png" alt="Payment stopped screen"/></td>
+  </tr>
+  <tr>
+    <td colspan="2"><b>Bank console</b>: live decisions with the evidence and rule behind each one.<br/><img src="docs/screenshots/console-stream.png" alt="Bank console decision stream"/></td>
+  </tr>
+</table>
+
+---
+
+## 🚀 Quick start
+
+**Prerequisites:** Node.js **20+** and **pnpm 9** (`corepack enable`, or `npm i -g pnpm@9`).
 
 ```bash
+git clone https://github.com/yaswanthme007/viraam.git
+cd viraam
 pnpm install
 pnpm dev
 ```
 
 `pnpm dev` starts all four processes:
 
-| URL | What |
+| URL | View |
 |---|---|
-| http://localhost:5173 | **Payer's phone**: scenario picker, phone, "stayed on phone" vs "sent to bank" panels |
-| http://localhost:5174 | **Trusted contact's phone** (Ravi) |
-| http://localhost:5175 | **Bank console**: live decision stream |
-| http://localhost:4000 | **Gateway**: attestation verify, policy, mock rail, SSE |
+| http://localhost:5173 | 📱 **Payer's phone**: scenario picker, phone, "stayed on phone" vs "sent to bank" panels |
+| http://localhost:5174 | 🤝 **Trusted contact's phone** (Ravi) |
+| http://localhost:5175 | 🏦 **Bank console**: live decision stream |
+| http://localhost:4000 | ⚙️ **Gateway**: attestation verify, policy, mock rail, SSE |
 
-No network access is needed at runtime: no CDNs, web fonts or external APIs.
+| Command | What it does |
+|---|---|
+| `pnpm dev` | Run everything |
+| `pnpm verify` | End-to-end verifier: every scenario plus attack cases against the real gateway (52 checks) |
+| `pnpm typecheck` | `tsc` across all 7 workspace packages |
+| `pnpm build` | Production build of the three React apps |
 
-Other commands:
+> No network access is needed at runtime: no external APIs, CDNs or web fonts.
 
-```bash
-pnpm verify      # end-to-end verifier: all scenarios + attack cases against the real gateway (52 checks)
-pnpm typecheck   # tsc across all 7 workspace packages
-pnpm build       # production build of the three React apps
+---
+
+## ⚙️ How it works
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as Payer's phone
+    participant G as Bank gateway
+    participant T as Trusted contact
+    participant R as Mock rail
+    U->>U: Collect signals (stay on device)
+    U->>U: Rule engine → evidence codes, risk, verdict
+    U->>G: Payment instruction + signed attestation
+    G->>G: Verify schema · key · signature · freshness · binding · nonce
+    G->>G: Evaluate policy.yaml (first match wins)
+    alt ALLOW
+        G->>R: Settle
+    else STEP_UP
+        G-->>U: Cooling period
+        U->>G: Re-confirm with fresh attestation
+        G->>R: Settle
+    else HOLD
+        G-->>T: Hold brief (amount band + reasons)
+        T->>G: Signed APPROVE / DENY
+        G->>R: Settle only if APPROVED
+        Note over G: No answer before expiry → DENY
+    end
+    G-->>U: Live status (SSE)
 ```
 
 ---
 
-## Architecture
+## 🏗 Architecture
 
 ```mermaid
 flowchart LR
-  subgraph PHONE["Payer's phone (apps/device)"]
+  subgraph PHONE["📱 Payer's phone · apps/device"]
     C["DeviceSignalCollector<br/>(SIMULATED in this prototype)"]
     R["Rule engine<br/>packages/intelligence"]
     AI["Optional model scorer<br/>intelligence/ai (deletable)"]
-    K["Device key<br/>Ed25519 (packages/crypto)"]
+    K["Device key<br/>Ed25519 · packages/crypto"]
     C -- "raw signals<br/>(never leave phone)" --> R
     AI -. "advisory score<br/>can only raise risk" .-> R
     R -- "evidence codes, risk, verdict" --> K
   end
 
-  subgraph GW["Bank gateway (services/gateway)"]
+  subgraph GW["🏦 Bank gateway · services/gateway"]
     V["Verify<br/>schema, enrolled key, signature,<br/>freshness, payment binding, nonce"]
     P["Policy engine<br/>config/policy.yaml"]
     H["Hold manager<br/>expiry → DENY"]
@@ -80,35 +201,28 @@ flowchart LR
   end
 
   K -- "signed attestation<br/>+ payment instruction" --> V
-  H -- "SSE: hold brief<br/>(band + codes only)" --> T["Trusted contact's phone<br/>(apps/trusted)"]
+  H -- "SSE: hold brief<br/>(band + codes only)" --> T["🤝 Trusted contact's phone<br/>apps/trusted"]
   T -- "signed APPROVE / DENY<br/>(contact's own key)" --> H
-  GW -- "SSE: decision stream" --> CON["Bank console<br/>(apps/console)"]
+  GW -- "SSE: decision stream" --> CON["🖥 Bank console<br/>apps/console"]
   GW -- "SSE: payment status" --> PHONE
 ```
 
-### Monorepo
+### Tech stack
 
-```
-viraam/
-  apps/device             React: simulated phone, payment screen + VIRAAM overlay
-  apps/trusted            React: trusted contact's approval screen
-  apps/console            React: bank operations console, live decision stream
-  services/gateway        Node + Express: attestation verify, policy, mock rail, SSE
-    config/policy.yaml      the bank's rules, as data
-    config/registry.json    enrolled public keys + trusted-contact enrolment
-    scripts/e2e.ts          `pnpm verify`
-  packages/schema         Zod schemas, shared types, evidence codes, DeviceSignalCollector, demo scenarios
-  packages/crypto         Ed25519 keygen/sign/verify (@noble/curves), canonical JSON, envelopes
-  packages/intelligence   Rule engine (default) + copy generator; ./ai = optional model pieces
-```
-
-Packages are consumed as TypeScript source. There is no build step between them.
+| Layer | Technology |
+|---|---|
+| Frontends | React 18, Vite 5, plain CSS (system fonts, no CDN) |
+| Gateway | Node 20, Express 4, Server-Sent Events, `yaml` |
+| Schemas and types | Zod 3 (strict), TypeScript 5 |
+| Cryptography | `@noble/curves` Ed25519, `@noble/hashes` SHA-256 |
+| Monorepo | pnpm workspaces; packages consumed as TypeScript source |
+| Verification | `tsx` end-to-end script against the real HTTP + SSE gateway |
 
 ---
 
-## The attestation
+## 🔏 The attestation
 
-What actually crosses the wire for the "digital arrest" scenario:
+What actually crosses the wire in the "digital arrest" scenario:
 
 ```json
 {
@@ -136,21 +250,20 @@ What actually crosses the wire for the "digital arrest" scenario:
 | `deviceId` | Pseudonymous per-install id. Not an IMEI, phone number or account id. |
 | `issuedAt`, `nonce` | Freshness and replay protection. |
 | `sessionRisk`, `verdict` | The device's own assessment: advisory input to bank policy. |
-| `evidence` | Boolean situational facts (see below). |
+| `evidence` | Boolean situational facts (below). |
 | `payeeNovelty`, `amountBand` | Coarse buckets, never exact history or amounts. |
-| `paymentBinding` | `sha256(canonical{paymentId, payeeVpa, amountPaise})`, so the attestation is valid for exactly one payment. |
+| `paymentBinding` | `sha256(canonical{paymentId, payeeVpa, amountPaise})`, valid for exactly one payment. |
 | `scorer` | Provenance: `rules-v1`, or `rules-v1+model-lr-v0` when the optional model is on. |
 
-The signature covers `"VIRAAM-ATTESTATION-v1\n" + canonicalJSON(payload)` (sorted keys). The domain prefix
-stops a signature for one message type from being replayed as another. The schema is `.strict()`: an
-attestation carrying **any** extra field is rejected as `MALFORMED`, so raw data can't be smuggled in.
+The signature covers `"VIRAAM-ATTESTATION-v1\n" + canonicalJSON(payload)` with sorted keys. The domain prefix stops
+a signature for one message type from being replayed as another.
 
 ### Evidence codes
 
 | Code | Asserts |
 |---|---|
 | `CALL_ACTIVE_GT_30M` | A voice call has been active for over 30 minutes |
-| `REMOTE_ACCESS_SERVICE_ACTIVE` | A service that can read/drive the screen is running |
+| `REMOTE_ACCESS_SERVICE_ACTIVE` | A service that can read or drive the screen is running |
 | `SCREEN_SHARE_ACTIVE` | The screen is being captured or mirrored |
 | `SIDELOADED_APP_RECENT` | An app from an unknown source was installed in the last 72 h |
 | `PAYEE_FIRST_SEEN` | This device has never paid this payee |
@@ -158,41 +271,45 @@ attestation carrying **any** extra field is rejected as `MALFORMED`, so raw data
 | `OFF_PATTERN_HOUR` | Outside the user's usual transacting hours |
 | `RAPID_APP_SWITCHING` | Unusually frequent app switching (a coaching signal) |
 
-### Deliberately excluded, and why
+---
 
-| Never transmitted | Why it's excluded | What's sent instead |
+## 🔒 What never leaves the phone
+
+| Never transmitted | Why it's excluded | Sent instead |
 |---|---|---|
 | Caller's number, contact name | Identifies a third party who never consented; would turn the bank into a call-log collector | `CALL_ACTIVE_GT_30M` |
-| Call audio or transcript | Content surveillance; also unnecessary, since *duration while paying* is the signal | nothing |
-| Exact call duration | Precision adds no decision value over the threshold and fingerprints behaviour | the code alone |
-| App names / package names | Reveal health, religion, dating, finance apps; also brittle (scammers rename tools) | `REMOTE_ACCESS_SERVICE_ACTIVE`, `SIDELOADED_APP_RECENT` |
-| Screen contents / screenshots | The most sensitive data on the device, and may include OTPs | `SCREEN_SHARE_ACTIVE` |
+| Call audio or transcript | Content surveillance, and unnecessary: *duration while paying* is the signal | nothing |
+| Exact call duration | Adds no decision value over the threshold and fingerprints behaviour | the code alone |
+| App names or package names | Reveal health, religion, dating and finance apps; also brittle, since scammers rename tools | `REMOTE_ACCESS_SERVICE_ACTIVE`, `SIDELOADED_APP_RECENT` |
+| Screen contents or screenshots | The most sensitive data on the device, and may include OTPs | `SCREEN_SHARE_ACTIVE` |
 | Contact list, payee history | Social graph. The bank only needs "new or not" | `payeeNovelty` |
 | Transaction history, percentile value | Spending profile | `AMOUNT_GT_P99`, `amountBand` |
 | Location, usual hours, activity timeline | Movement and routine are highly identifying | `OFF_PATTERN_HOUR` |
 | Hardware ids (IMEI, Android ID, MAC) | Cross-context tracking | pseudonymous `deviceId` bound to an enrolled key |
 
-Data minimisation also applies downstream: the **trusted contact** sees an amount *band* and the evidence
-in plain language. They do **not** see the payee's name or VPA or the exact amount (`pnpm verify` asserts this).
-Raw signals exist only in device memory long enough for the rule engine to evaluate them. The device app
-displays them in a demo panel labelled *"Stayed on this phone"* so the audience can see the contrast.
+Minimisation continues downstream. The **trusted contact** sees an amount *band* and plain-language reasons,
+but **not** the payee's name or VPA or the exact amount; `pnpm verify` asserts this. Raw signals exist only in
+device memory long enough to be evaluated. The demo shows them in a panel labelled *"Stayed on this phone"*
+for contrast.
 
 ---
 
-## Bank-side policy
+## 📜 Bank-side policy engine
 
-Pipeline in `services/gateway/src/verify.ts`. The first failure rejects the payment and shows as `REJECTED`
-in the console:
+The verification pipeline is in [`services/gateway/src/verify.ts`](services/gateway/src/verify.ts). The first
+failure rejects the payment, and it appears as `REJECTED` on the console:
 
-1. **Schema**: strict Zod parse → `MALFORMED`
-2. **Enrolled key**: `keyId` must be in `config/registry.json`, role `device`, bound to the payload's `deviceId` → `UNKNOWN_KEY`
-3. **Signature**: Ed25519 over domain + canonical payload → `BAD_SIGNATURE`
-4. **Freshness**: no older than `maxAgeSeconds`, no further ahead than `maxFutureSkewSeconds` → `STALE` / `FROM_FUTURE`
-5. **Payment binding**: hash and amount band must match *this* payment → `BINDING_MISMATCH`
-6. **Nonce**: unseen within TTL (consumed only once 1–5 pass) → `REPLAYED_NONCE`
+| # | Check | Reject code |
+|---|---|---|
+| 1 | Strict schema parse | `MALFORMED` |
+| 2 | `keyId` enrolled in `registry.json`, role `device`, bound to `deviceId` | `UNKNOWN_KEY` |
+| 3 | Ed25519 over domain + canonical payload | `BAD_SIGNATURE` |
+| 4 | Within `maxAgeSeconds` / `maxFutureSkewSeconds` | `STALE` / `FROM_FUTURE` |
+| 5 | Hash and amount band match *this* payment | `BINDING_MISMATCH` |
+| 6 | Nonce unseen (consumed only after 1–5 pass) | `REPLAYED_NONCE` |
 
-Then **`config/policy.yaml`** is evaluated top to bottom. The first rule whose conditions all match decides.
-Rules are data, not code:
+Then [`config/policy.yaml`](services/gateway/config/policy.yaml) is evaluated top to bottom; the first rule
+whose conditions all match decides:
 
 ```yaml
 - id: coercion-signature
@@ -203,71 +320,71 @@ Rules are data, not code:
   outcome: HOLD
 ```
 
-Available conditions: `evidenceAll`, `evidenceAny`, `sessionRiskAtLeast`, `deviceVerdictIn`,
-`amountBandIn`, `payeeNoveltyIn`. The file is schema-validated at startup; a typo fails loudly.
+The available conditions are `evidenceAll`, `evidenceAny`, `sessionRiskAtLeast`, `deviceVerdictIn`, `amountBandIn`
+and `payeeNoveltyIn`. The file is schema-validated at startup, so a typo fails loudly.
 
-- **STEP_UP**: `stepUp.coolingSeconds` (15 s for the demo). Re-confirming early returns `425`. Re-confirming after the cooling period needs a **fresh** attestation (new nonce); if the situation got worse meanwhile, it escalates to HOLD.
-- **HOLD**: the trusted contact's reply is itself an Ed25519-signed envelope (`VIRAAM-HOLD-RESOLUTION-v1`) verified against *their* enrolled key. The payer's key can't approve their own hold. After `hold.expirySeconds` with no answer, the payment is **DENIED**: silence never releases money.
-- **Unattested payments** (no VIRAAM on the phone): `unattested.outcome: ALLOW` mirrors today's rail. A bank enforcing VIRAAM would set `REJECT`.
+- **STEP_UP**: the pause lasts `stepUp.coolingSeconds` (15 s for the demo). Re-confirming early returns `425`. Re-confirming afterwards needs a **fresh** attestation, and escalates to HOLD if the situation got worse.
+- **HOLD**: the trusted contact's reply is its own signed envelope (`VIRAAM-HOLD-RESOLUTION-v1`), verified against *their* enrolled key. The payer's key can't approve their own hold. After `hold.expirySeconds` with no answer, the payment is **DENIED**.
+- **Unattested payments**: `unattested.outcome: ALLOW` mirrors today's rail. A bank enforcing VIRAAM would set `REJECT`.
 
 ---
 
-## AI supports the system; it is not the system
+## 🧠 AI supports the system; it is not the system
 
 The default decision path is fully deterministic:
 
 ```
 raw signals ──deriveEvidence()──▶ evidence codes ──RuleBasedRiskScorer──▶ risk ──decideVerdict()──▶ verdict
-                (thresholds in one const)          (weights in one const)        (hard rules + thresholds)
+             (thresholds in one const)           (weights in one const)        (hard rules + thresholds)
 ```
 
-and the bank re-decides from the evidence with `policy.yaml`. **No model is involved anywhere by default.**
-
-Model-based pieces sit behind two interfaces in `packages/intelligence/src/types.ts`:
+The bank then re-decides from the evidence using `policy.yaml`. **No model is involved by default.**
 
 | Interface | Default (rules) | Optional (`packages/intelligence/src/ai/`) |
 |---|---|---|
-| `RiskScorer` | `RuleBasedRiskScorer` (`rules-v1`): fixed weights + combination bonus | `LogisticRiskScorer` (`model-lr-v0`): a small logistic model over evidence codes. Its coefficients are **hand-set placeholders**, not trained on anything; there is no real data in this repo. |
-| `InterventionCopyGenerator` | `TemplateCopyGenerator`: deterministic templates | `SalienceCopyGenerator`: same templates ordered by model weight. This is the slot for an on-device small language model. |
+| `RiskScorer` | `RuleBasedRiskScorer` (`rules-v1`) | `LogisticRiskScorer` (`model-lr-v0`). Coefficients are **hand-set placeholders**, not trained; there is no real data in this repo. |
+| `InterventionCopyGenerator` | `TemplateCopyGenerator` | `SalienceCopyGenerator`: the slot for an on-device small language model |
 
-Guard rails, enforced **outside** the `ai/` folder in `assess.ts`:
+**Guard rails**, enforced *outside* the `ai/` folder in `assess.ts`:
 
 - A model sees **evidence codes only**, never raw signals.
 - Its score can **raise** risk above the rule score, never lower it (`max(rule, model)`).
 - It can't override the hard rule (`call + screen control + new payee ⇒ HOLD`) or bank policy.
 
-**It's removable, and that has been tested.** Delete `packages/intelligence/src/ai/` and then:
+**Removal has been tested.** Delete `packages/intelligence/src/ai/` and:
 
-- `pnpm typecheck` passes. Nothing imports `ai/` statically: the device app discovers it with `import.meta.glob`, and the verifier with a non-literal dynamic import.
-- The device app builds and runs. The "Optional model scorer" toggle disappears.
-- `pnpm verify` passes all rule-path checks and reports the model-assisted run as skipped.
-- All four demo scenarios behave the same in the browser.
+- ✅ `pnpm typecheck` passes. Nothing imports `ai/` statically: the device app uses `import.meta.glob`, and the verifier uses a non-literal dynamic import.
+- ✅ The device app builds and runs, and the "Optional model scorer" toggle disappears.
+- ✅ `pnpm verify` passes all rule-path checks and reports the model run as skipped.
+- ✅ All four demo scenarios behave the same in the browser.
 
-(If you delete or restore the folder while `pnpm dev` is running, restart it. Vite caches the glob result.)
+> If you delete or restore the folder while `pnpm dev` is running, restart it. Vite caches the glob result.
 
 ---
 
-## REAL vs SIMULATED
+## 🧪 REAL vs SIMULATED
 
 | Component | Status | Notes |
 |---|---|---|
-| Device sensor layer (call state, remote access, screen share, sideload, app switching) | **SIMULATED** | `SimulatedDeviceSignalCollector` replays seeded scenarios. **No phone sensors are read.** See the interface below. |
-| Payee history, user's p99 amount, usual hours | **SIMULATED** | Seeded per scenario; a real app computes these from its local transaction store. |
-| Evidence derivation, risk scoring, device verdict | **REAL** | Deterministic rule engine, runs in the browser exactly as it would on device. |
-| Ed25519 signing and verification | **REAL** | `@noble/curves`. Domain-separated, canonical JSON. |
-| Device and trusted-contact keys | **SIMULATED** | Derived from public seed labels (`deriveDemoKeyPair`) so the demo is reproducible. Anyone can recompute them. Production: generated in Android Keystore / StrongBox, enrolment backed by Key Attestation. |
-| Key enrolment / registry | **SIMULATED** | Static `config/registry.json`. Production: registered during bank-app onboarding. |
-| Gateway verification (schema, key, signature, freshness, binding, replay) | **REAL** | Exercised by `pnpm verify`, including forged, stale, replayed, tampered and mis-bound attestations. |
-| Policy engine (`policy.yaml`) | **REAL** | Declarative, validated, first-match. |
-| Hold workflow, trusted-contact signed approval, expiry → DENY | **REAL** (logic) | Notification over local SSE stands in for push notifications. |
-| Payment rail | **MOCK** | In-memory ledger issuing fake `MOCKRRN…` references. No bank, NPCI or UPI integration. |
-| Identities, VPAs, amounts | **SYNTHETIC** | `@mockupi` handles; "Asha" and "Ravi" are fictional. |
-| Optional model scorer | **PLACEHOLDER** | Hand-set coefficients; see above. |
-| State persistence | **IN-MEMORY** | Restarting the gateway clears payments, holds and nonces. |
+| Device sensor layer (call, remote access, screen share, sideload, app switching) | 🟡 **SIMULATED** | `SimulatedDeviceSignalCollector` replays seeded scenarios. **No phone sensors are read.** |
+| Payee history, p99 amount, usual hours | 🟡 **SIMULATED** | Seeded per scenario; a real app computes these from its local store. |
+| Evidence derivation, risk scoring, device verdict | 🟢 **REAL** | Deterministic rule engine, running exactly as it would on device. |
+| Ed25519 signing and verification | 🟢 **REAL** | `@noble/curves`, domain-separated, canonical JSON. |
+| Device and trusted-contact keys | 🟡 **SIMULATED** | Derived from public seed labels so the demo is reproducible. Production: Android Keystore / StrongBox + Key Attestation. |
+| Key enrolment / registry | 🟡 **SIMULATED** | Static `registry.json`. Production: bank-app onboarding. |
+| Gateway verification pipeline | 🟢 **REAL** | Exercised by `pnpm verify` with forged, stale, replayed, tampered and mis-bound attestations. |
+| Policy engine (`policy.yaml`) | 🟢 **REAL** | Declarative, validated, first-match. |
+| Hold workflow, signed trusted-contact reply, expiry → DENY | 🟢 **REAL** (logic) | Local SSE stands in for push notifications. |
+| Payment rail | 🔴 **MOCK** | In-memory ledger with fake `MOCKRRN…` references. No bank, NPCI or UPI integration. |
+| Identities, VPAs, amounts | ⚪ **SYNTHETIC** | `@mockupi` handles; "Asha" and "Ravi" are fictional. |
+| Optional model scorer | ⚪ **PLACEHOLDER** | Hand-set coefficients. |
+| State | ⚪ **IN-MEMORY** | Restarting the gateway clears payments, holds and nonces. |
 
-### `DeviceSignalCollector`: the seam for a native collector
+---
 
-Exported from `packages/schema` (`src/signals.ts`):
+## 🔌 `DeviceSignalCollector`: the native seam
+
+Exported from [`packages/schema/src/signals.ts`](packages/schema/src/signals.ts):
 
 ```ts
 export interface DeviceSignalCollector {
@@ -279,78 +396,138 @@ export interface DeviceSignalCollector {
 export interface PaymentContext { payeeVpa: string; amountPaise: number }
 ```
 
-`DeviceSignals` is a strict Zod schema (also exported) with `capturedAt`, `localTime`, `call {active,
-durationSeconds}`, `remoteAccessServiceActive`, `screenShareActive`, `sideloadedAppInstalledHoursAgo`,
-`appSwitchesLast60s`, `payeeHistory`, `amountStats`, `usualActiveHours`. Even the *local* snapshot contains no
-numbers, names, app identifiers or content.
-
-How a native Android collector would fill it (indicative):
+`DeviceSignals` is a strict Zod schema with no numbers, names, app identifiers or content, even locally.
+A native Android collector would fill it as follows (indicative):
 
 | Field | Android source |
 |---|---|
-| `call.active`, `durationSeconds` | `TelephonyManager` + `TelephonyCallback.CallStateListener` (`READ_PHONE_STATE`), local timer |
-| `remoteAccessServiceActive` | `AccessibilityManager.getEnabledAccessibilityServiceList()` filtered to services that can retrieve window content or perform gestures |
-| `screenShareActive` | `WindowManager.addScreenRecordingCallback` (API 35+); virtual displays via `DisplayManager` on older versions |
+| `call.active`, `durationSeconds` | `TelephonyManager` + `TelephonyCallback.CallStateListener` (`READ_PHONE_STATE`) |
+| `remoteAccessServiceActive` | `AccessibilityManager.getEnabledAccessibilityServiceList()`, filtered to services that can read windows or perform gestures |
+| `screenShareActive` | `WindowManager.addScreenRecordingCallback` (API 35+); `DisplayManager` virtual displays on older versions |
 | `sideloadedAppInstalledHoursAgo` | `PackageManager.getInstallSourceInfo()` + `PackageInfo.firstInstallTime` |
-| `appSwitchesLast60s` | `UsageStatsManager.queryEvents()` (`ACTIVITY_RESUMED`), with explicit usage-access consent |
+| `appSwitchesLast60s` | `UsageStatsManager.queryEvents()` with explicit usage-access consent |
 | `payeeHistory`, `amountStats`, `usualActiveHours` | The payment app's own local store |
 
-Contract: return only these fields; never persist or transmit the snapshot; when a signal is unavailable
-(permission denied, older OS), report the benign value. **VIRAAM must degrade to "less evidence", never to
-"block".**
+**Contract:** return only these fields; never persist or transmit the snapshot; when a signal is unavailable,
+report the benign value. VIRAAM must degrade to **"less evidence"**, never to **"block"**.
 
 ---
 
-## Demo scenarios
+## 🎬 Demo scenarios
 
-Seeded and deterministic. Pick them from the left panel of the device app.
+Seeded and deterministic. Select them from the left panel of the device app.
 
 | # | Scenario | Inputs | Expected |
 |---|---|---|---|
-| 1 | Normal payment | ₹340 to a store paid 42 times, 11:05 AM, no call | **ALLOW**, no evidence |
-| 2 | Digital arrest | 47-min call, remote-access service on, first-seen payee, 2:14 AM, ₹2,00,000 | **HOLD** (`coercion-signature`) → Ravi denies → **DECLINED** |
-| 3 | False positive guard | 52-min family call, sister paid 18 times, ₹1,450, 7:40 PM | **ALLOW**. The long call *is* detected (`CALL_ACTIVE_GT_30M`, risk 20) but alone it isn't coercion. |
-| 4 | VIRAAM disabled | Same inputs as #2, layer off | **Settles**. Console shows **UNPROTECTED**: the bank had no context. |
-| 5 | Cooling-off (bonus) | ₹48,000 to a new landlord, 11:30 PM, no call | **STEP_UP**: 15 s pause, then re-confirm |
-
-`pnpm verify` runs all five through the real gateway twice (rule engine only, then rules + optional model), plus
-the attack cases and hold expiry.
+| 1 | Normal payment | ₹340 to a store paid 42 times, 11:05 AM, no call | ✅ **ALLOW**, no evidence |
+| 2 | Digital arrest | 47-min call, remote-access on, first-seen payee, 2:14 AM, ₹2,00,000 | 🧊 **HOLD** (`coercion-signature`) → Ravi denies → **DECLINED** |
+| 3 | False positive guard | 52-min family call, sister paid 18 times, ₹1,450, 7:40 PM | ✅ **ALLOW**. The call *is* detected (risk 20) but alone it isn't coercion. |
+| 4 | VIRAAM disabled | Same inputs as #2, layer off | 🔴 **Settles**. Console shows **UNPROTECTED**. |
+| 5 | Cooling-off (bonus) | ₹48,000 to a new landlord, 11:30 PM, no call | ⏸ **STEP_UP**: 15 s pause, then re-confirm |
 
 ---
 
-## 90-second demo script
+## ⏱ 90-second demo script
 
-**Setup (before recording).** Run `pnpm dev`. Open three browser windows side by side: **device**
-`localhost:5173` (wide, centre), **trusted** `localhost:5174` (right), **console** `localhost:5175` (bottom
-or a second screen). On the console, click **Clear**. Check that the device panel says *Gateway connected*
-and the console says *LIVE*.
+**Setup:** run `pnpm dev` and open the **device** (`:5173`), **trusted** (`:5174`) and **console** (`:5175`)
+views side by side. Click **Clear** on the console. Check for *Gateway connected* and *LIVE*.
 
 | Time | Click | Point at / say |
 |---|---|---|
-| 0:00 | Device: **4 · VIRAAM disabled** | "Asha has been on a call for 47 minutes. A fake officer had them install a remote-access app. It's 2:14 AM." Point at the green **On call** and amber **Screen control** pills. |
-| 0:08 | Device: **Pay ₹2,00,000** | Phone shows **₹2,00,000 sent**. Console: red **UNPROTECTED** card: *"The bank had no situational context."* "This is today." |
-| 0:18 | Device: **2 · Digital arrest** | The VIRAAM toggle switches **on**. Same call, same app, same payee, same amount. |
-| 0:22 | Device: **Pay ₹2,00,000** | Phone shows the calm VIRAAM overlay: *"Let's pause this payment."* with reasons. Right panel **Sent to the bank**: only evidence codes. "No phone number, no app name, no screen contents." |
-| 0:32 | (look at console) | **HOLD** card: rule `coercion-signature`, evidence chips, six green verification checks. |
-| 0:38 | (look at trusted phone) | Ravi's phone: *"Asha's payment is paused"*. Ravi sees a band (₹1 lakh – ₹5 lakh), not the payee. |
-| 0:45 | Trusted: **Stop this payment** | Device: *"Ravi stopped this payment. ₹2,00,000 is still in your account."* Console card flips to **DECLINED**. "Ravi's reply was signed on Ravi's phone." |
-| 0:55 | Device: **3 · False positive guard** → **Pay ₹1,450** | Sent. Console: **ALLOW** with `CALL_ACTIVE_GT_30M` shown. "We saw the hour-long call. It's a family call to a known payee, so we don't block it." |
-| 1:05 | Device: **1 · Normal payment** → **Pay ₹340** | **ALLOW**, *No evidence codes*. "Normal payments don't notice VIRAAM." |
-| 1:12 | Device: expand **Signed envelope (Ed25519)** | "Signed on device, verified by the bank, bound to this one payment, single-use nonce." |
-| 1:20 | Point at **Optional model scorer** toggle | "The rule engine decides. The model is optional: delete its folder and everything still runs." |
+| 0:00 | Device: **4 · VIRAAM disabled** | "47-minute call. A fake officer had Asha install a remote-access app. It's 2:14 AM." Point at the **On call** and **Screen control** pills. |
+| 0:08 | **Pay ₹2,00,000** | Phone: **₹2,00,000 sent**. Console: red **UNPROTECTED**. "This is today." |
+| 0:18 | **2 · Digital arrest** | The VIRAAM toggle switches **on**. Same call, app, payee and amount. |
+| 0:22 | **Pay ₹2,00,000** | Calm overlay: *"Let's pause this payment."* Right panel: only evidence codes. "No number, no app name, no screen contents." |
+| 0:32 | (console) | **HOLD**, rule `coercion-signature`, six green verification checks. |
+| 0:38 | (trusted phone) | *"Asha's payment is paused"*: a band, not the payee. |
+| 0:45 | Trusted: **Stop this payment** | Device: *"Ravi stopped this payment."* Console: **DECLINED**. "Signed on Ravi's phone." |
+| 0:55 | **3 · False positive guard** → **Pay ₹1,450** | **ALLOW** with `CALL_ACTIVE_GT_30M` visible. "We saw the call. It's family, so we don't block it." |
+| 1:05 | **1 · Normal payment** → **Pay ₹340** | **ALLOW**, no evidence. "Normal payments don't notice VIRAAM." |
+| 1:12 | Expand **Signed envelope (Ed25519)** | "Signed on device, bound to one payment, single-use nonce." |
+| 1:20 | Point at **Optional model scorer** | "Rules decide. Delete the AI folder and everything still runs." |
 | 1:30 | End | |
-
-If you have more time, add **5 · Cooling-off**: Pay, wait out the 15 s ring, then **Yes, pay ₹48,000**. It
-settles as **STEP UP → SETTLED** on the console.
 
 ---
 
-## Known limits (prototype honesty)
+## ✅ Verification
 
-- No sensors are read; the collector is simulated. A real collector also needs anti-tamper protection: on a
-  rooted or compromised device, the signals and the key are only as trustworthy as the OS. Play Integrity /
-  Key Attestation would gate enrolment.
-- Demo keys are derivable from public labels. Never reuse this key scheme.
+```bash
+pnpm verify
+```
+
+This boots the real gateway with the real `policy.yaml` on a random port, then drives the system exactly as the
+apps do, over the same rule engine, signing, HTTP and SSE:
+
+- **Privacy**: the payload has exactly the documented fields; no payee, payer, exact amount, call duration or history appears on the wire.
+- **Scenarios 1–5**: run twice, once with the rule engine only and once with rules + the optional model.
+- **HOLD flow**: the trusted contact is notified over SSE, their brief contains no exact amount or payee, the payer's own key can't approve, DENY is never settled, and a resolved hold can't be re-opened.
+- **Attacks refused**: unknown key, wrong key, evidence stripped after signing, stale, future-dated, attestation from another payment, extra payload field, replayed nonce, duplicate payment id.
+- **Safe expiry**: an unanswered hold expires to DENY and never reaches the rail.
+
+Result: **52 passed, 0 failed.** The full UI flow was also exercised in headless Chromium across all three apps.
+
+---
+
+## 📡 API reference
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/v1/payments` | Submit `{ intent, attestation \| null }` → verify → policy → decision |
+| `POST` | `/v1/payments/:id/confirm` | STEP_UP re-confirmation with a fresh attestation |
+| `POST` | `/v1/payments/:id/cancel` | Payer cancels a cooling or held payment |
+| `GET` | `/v1/payments/:id` | Current payment record |
+| `GET` | `/v1/holds/:holdId` | Trusted-contact brief |
+| `POST` | `/v1/holds/:holdId/resolve` | Signed APPROVE / DENY from the trusted contact |
+| `GET` | `/v1/events?channel=…` | SSE: `console`, `device:<id>` or `trusted:<id>` |
+| `GET` | `/v1/policy` | The loaded policy |
+| `POST` | `/v1/demo/reset` | Clear demo state (nonces are kept) |
+
+---
+
+## 🗂 Project structure
+
+```
+viraam/
+├── apps/
+│   ├── device/            React · simulated phone, payment screen + VIRAAM overlay
+│   ├── trusted/           React · trusted contact's approval screen
+│   └── console/           React · bank operations console, live decision stream
+├── services/
+│   └── gateway/           Node + Express · verify, policy, mock rail, SSE
+│       ├── config/policy.yaml      the bank's rules, as data
+│       ├── config/registry.json    enrolled public keys + trusted contacts
+│       └── scripts/e2e.ts          pnpm verify
+├── packages/
+│   ├── schema/            Zod schemas, types, evidence codes, DeviceSignalCollector, scenarios
+│   ├── crypto/            Ed25519 sign/verify, canonical JSON, envelopes
+│   └── intelligence/      rule engine (default) + copy generator
+│       └── src/ai/        optional model pieces (deletable)
+└── docs/
+    ├── VIRAAM-Project-Document.pdf
+    └── screenshots/
+```
+
+---
+
+## 🧭 Known limits and roadmap
+
+**Limits (prototype honesty)**
+
+- No sensors are read; the collector is simulated. On a rooted device, signals and keys are only as trustworthy as the OS.
+- Demo keys can be derived from public labels. Never reuse this key scheme.
 - Thresholds and weights are reasoned defaults, not calibrated on fraud data.
-- State is in memory; nonces don't survive a gateway restart.
-- The trusted-contact flow assumes one pre-enrolled contact; there's no enrolment UX.
+- State is in memory, and there is a single pre-enrolled trusted contact.
+
+**Roadmap**
+
+- [ ] Native Android `DeviceSignalCollector` (Kotlin) behind the same interface
+- [ ] Keystore / StrongBox keys with Key Attestation and Play Integrity at enrolment
+- [ ] Trusted-contact enrolment UX, multiple contacts, push notifications
+- [ ] Persistent nonce store and audit log at the gateway
+- [ ] Policy simulator: replay historical evidence against a candidate `policy.yaml`
+- [ ] Calibrated thresholds with partner-bank fraud data (privacy-preserving)
+- [ ] Multilingual intervention copy (Hindi, Telugu, Tamil, …)
+
+---
+
+<sub>All data in this repository is synthetic. VIRAAM is a research prototype and is not affiliated with NPCI, any bank, or any UPI app.</sub>
