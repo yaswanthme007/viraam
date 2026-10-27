@@ -1,0 +1,24 @@
+{
+  "_comment": "Enrolled public keys. In production these are registered at bank-app onboarding with Android Key Attestation proving the key lives in hardware. Here they are the public halves of the seeded DEMO keys (packages/crypto deriveDemoKeyPair). Synthetic identities only.",
+  "keys": [
+    {
+      "keyId": "key_dev_asha_demo_01",
+      "role": "device",
+      "subjectId": "dev_7f3a9c2e1b5d",
+      "publicKey": "6d62b4df4fb7cd21eef284955b291e33c4131489e8ae32acff561fbf3c9d61a8"
+    },
+    {
+      "keyId": "key_tc_ravi_demo_01",
+      "role": "trusted-contact",
+      "subjectId": "tc_ravi_demo",
+      "publicKey": "66a388413b51c11056515988779e157f94a223b285c5c8c44a4ec820e776d50f"
+    }
+  ],
+  "enrolments": [
+    {
+      "deviceId": "dev_7f3a9c2e1b5d",
+      "ownerDisplayName": "Asha",
+      "trustedContact": { "contactId": "tc_ravi_demo", "displayName": "Ravi" }
+    }
+  ]
+}

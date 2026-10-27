@@ -1,0 +1,78 @@
+# VIRAAM bank policy.
+#
+# This file IS the bank-side decision logic. The gateway verifies the device's
+# signed attestation, then walks `rules` top to bottom; the first rule whose
+# conditions ALL match decides the outcome. No match -> `default`.
+#
+# Conditions available on a rule (all optional, all ANDed together):
+#   evidenceAll:        every listed evidence code is present
+#   evidenceAny:        at least one listed evidence code is present
+#   sessionRiskAtLeast: device-reported risk score (0-100) >= value
+#   deviceVerdictIn:    the device's own verdict is one of these
+#   amountBandIn:       UNDER_1K | 1K_TO_10K | 10K_TO_1L | 1L_TO_5L | ABOVE_5L
+#   payeeNoveltyIn:     KNOWN | RECENT | FIRST_SEEN
+#
+# Outcomes: ALLOW | STEP_UP (cooling period, then re-confirm) | HOLD (freeze, ask trusted contact)
+
+version: 1
+name: viraam-demo-policy
+
+attestation:
+  maxAgeSeconds: 60          # reject attestations older than this
+  maxFutureSkewSeconds: 30   # tolerate small device clock drift
+  nonceTtlSeconds: 600       # remember nonces at least as long as maxAge
+
+# Payments that arrive with NO attestation (a phone without VIRAAM).
+# ALLOW mirrors today's rail. A bank enforcing VIRAAM would set REJECT.
+unattested:
+  outcome: ALLOW
+  note: "Legacy path: no situational context available."
+
+stepUp:
+  coolingSeconds: 15         # demo value; 30-120s in a real deployment
+
+hold:
+  expirySeconds: 120         # trusted contact must answer within this window
+  onExpiry: DENY             # silence never releases money
+
+rules:
+  - id: coercion-signature
+    description: Long call while someone can see or control the screen, paying a first-seen payee. The digital-arrest shape.
+    when:
+      evidenceAll: [CALL_ACTIVE_GT_30M, PAYEE_FIRST_SEEN]
+      evidenceAny: [REMOTE_ACCESS_SERVICE_ACTIVE, SCREEN_SHARE_ACTIVE]
+    outcome: HOLD
+
+  - id: screen-control-new-payee-large
+    description: Remote control or screen share active, first-seen payee, above 10,000 rupees.
+    when:
+      evidenceAny: [REMOTE_ACCESS_SERVICE_ACTIVE, SCREEN_SHARE_ACTIVE]
+      payeeNoveltyIn: [FIRST_SEEN]
+      amountBandIn: [10K_TO_1L, 1L_TO_5L, ABOVE_5L]
+    outcome: HOLD
+
+  - id: high-session-risk
+    description: Device reports high situational risk.
+    when:
+      sessionRiskAtLeast: 70
+    outcome: HOLD
+
+  - id: device-requested-hold
+    description: The device's own rules asked for a hold. The bank never downgrades it.
+    when:
+      deviceVerdictIn: [HOLD]
+    outcome: HOLD
+
+  - id: elevated-session-risk
+    description: Several mild signals together. Pause and re-confirm, don't block.
+    when:
+      sessionRiskAtLeast: 40
+    outcome: STEP_UP
+
+  - id: device-requested-step-up
+    description: The device asked for a cooling-off pause.
+    when:
+      deviceVerdictIn: [STEP_UP]
+    outcome: STEP_UP
+
+default: ALLOW

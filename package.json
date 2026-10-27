@@ -1,0 +1,19 @@
+{
+  "name": "viraam",
+  "private": true,
+  "version": "0.1.0",
+  "description": "VIRAAM — a coercion-aware circuit breaker for UPI payments (hackathon prototype, fully offline, synthetic data only).",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --stream dev",
+    "verify": "pnpm --filter @viraam/gateway verify",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
